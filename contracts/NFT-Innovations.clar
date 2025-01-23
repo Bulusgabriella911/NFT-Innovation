@@ -75,3 +75,17 @@
       { speed-boost: (+ (get speed-boost current-powerups) u1),
         power-up-count: (- (get power-up-count current-powerups) u1) })
     (ok true)))
+
+
+
+(define-map user-interactions principal 
+  { total-interactions: uint,
+    last-interaction: uint })
+
+(define-public (interact-with-nft (target-user principal))
+  (let ((current-interactions (default-to { total-interactions: u0, last-interaction: u0 }
+                              (map-get? user-interactions tx-sender))))
+    (map-set user-interactions tx-sender
+      { total-interactions: (+ (get total-interactions current-interactions) u1),
+        last-interaction: stacks-block-height })
+    (ok true)))
