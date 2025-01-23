@@ -60,3 +60,18 @@
       { staked: true,
         stake-time: stacks-block-height })
     (ok true)))
+
+
+
+(define-map power-ups principal 
+  { speed-boost: uint,
+    power-up-count: uint })
+
+(define-public (use-power-up)
+  (let ((current-powerups (default-to { speed-boost: u0, power-up-count: u0 }
+                          (map-get? power-ups tx-sender))))
+    (asserts! (> (get power-up-count current-powerups) u0) (err u102))
+    (map-set power-ups tx-sender
+      { speed-boost: (+ (get speed-boost current-powerups) u1),
+        power-up-count: (- (get power-up-count current-powerups) u1) })
+    (ok true)))
