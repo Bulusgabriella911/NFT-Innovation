@@ -46,3 +46,17 @@
 
 (define-read-only (get-evolution-stage (owner principal))
   (default-to u0 (map-get? evolution-stages owner)))
+
+
+
+(define-map staked-nfts principal 
+  { staked: bool,
+    stake-time: uint })
+
+(define-public (stake-nft)
+  (let ((token-owner (map-get? token-owners tx-sender)))
+    (asserts! (is-some token-owner) ERR_NOT_AUTHORIZED)
+    (map-set staked-nfts tx-sender
+      { staked: true,
+        stake-time: stacks-block-height })
+    (ok true)))
