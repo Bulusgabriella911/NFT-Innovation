@@ -89,3 +89,22 @@
       { total-interactions: (+ (get total-interactions current-interactions) u1),
         last-interaction: stacks-block-height })
     (ok true)))
+
+
+
+(define-map nft-traits uint 
+  { strength: uint,
+    speed: uint,
+    wisdom: uint })
+
+(define-public (generate-traits (token-id uint))
+  (let ((owner (map-get? token-owners tx-sender)))
+    (asserts! (is-some owner) ERR_NOT_AUTHORIZED)
+    (map-set nft-traits token-id
+      { strength: (+ u1 (mod stacks-block-height u10)),
+        speed: (+ u1 (mod stacks-block-height u8)),
+        wisdom: (+ u1 (mod stacks-block-height u12)) })
+    (ok true)))
+
+(define-read-only (get-nft-traits (token-id uint))
+  (map-get? nft-traits token-id))
