@@ -108,3 +108,151 @@
 
 (define-read-only (get-nft-traits (token-id uint))
   (map-get? nft-traits token-id))
+
+
+;; New breeding maps
+(define-map breeding-pairs 
+  { parent1: uint, parent2: uint }
+  { child: uint, breed-time: uint })
+
+(define-map breeding-cooldowns principal uint)
+
+;; Breeding function
+(define-public (breed-nfts (parent1-id uint) (parent2-id uint))
+  (let (
+    (token-id (+ (var-get last-token-id) u1))
+    (cooldown (default-to u0 (map-get? breeding-cooldowns tx-sender)))
+  )
+    (asserts! (> stacks-block-height (+ cooldown u144)) (err u103))
+    (map-set breeding-pairs { parent1: parent1-id, parent2: parent2-id }
+      { child: token-id, breed-time: stacks-block-height })
+    (map-set breeding-cooldowns tx-sender stacks-block-height)
+    (var-set last-token-id token-id)
+    (ok token-id)))
+
+
+
+;; Achievement tracking
+(define-map user-achievements principal 
+  { total-mints: uint,
+    evolution-count: uint,
+    interaction-score: uint })
+
+(define-public (unlock-achievement (achievement-type uint))
+  (let (
+    (current-achievements (default-to { total-mints: u0, evolution-count: u0, interaction-score: u0 }
+                          (map-get? user-achievements tx-sender)))
+  )
+    (map-set user-achievements tx-sender
+      (if (is-eq achievement-type u1)
+        { total-mints: (+ (get total-mints current-achievements) u1),
+          evolution-count: (get evolution-count current-achievements),
+          interaction-score: (get interaction-score current-achievements) }
+        (if (is-eq achievement-type u2)
+          { total-mints: (get total-mints current-achievements),
+            evolution-count: (+ (get evolution-count current-achievements) u1),
+            interaction-score: (get interaction-score current-achievements) }
+          { total-mints: (get total-mints current-achievements),
+            evolution-count: (get evolution-count current-achievements),
+            interaction-score: (+ (get interaction-score current-achievements) u1) })))
+    (ok true)))
+
+
+
+;; Trading functionality
+(define-map trade-offers 
+  { seller: principal, token-id: uint }
+  { price: uint, active: bool })
+
+(define-public (create-trade-offer (token-id uint) (price uint))
+  (let ((owner (map-get? token-owners tx-sender)))
+    (asserts! (is-some owner) ERR_NOT_AUTHORIZED)
+    (map-set trade-offers { seller: tx-sender, token-id: token-id }
+      { price: price, active: true })
+    (ok true)))
+
+(define-public (accept-trade-offer (seller principal) (token-id uint))
+  (let ((offer (map-get? trade-offers { seller: seller, token-id: token-id })))
+    (asserts! (is-some offer) (err u104))
+    (asserts! (get active (unwrap-panic offer)) (err u105))
+    ;; Transfer logic would go here
+    (map-set trade-offers { seller: seller, token-id: token-id }
+      { price: (get price (unwrap-panic offer)), active: false })
+    (ok true)))
+
+
+
+;; Element system
+(define-map nft-elements uint 
+  { primary: uint,
+    secondary: uint,
+    elemental-power: uint })
+
+(define-public (assign-elements (token-id uint))
+  (let (
+    (owner (map-get? token-owners tx-sender))
+    (block-seed (mod stacks-block-height u5))
+  )
+    (asserts! (is-some owner) ERR_NOT_AUTHORIZED)
+    (map-set nft-elements token-id
+      { primary: block-seed,
+        secondary: (mod (+ block-seed u2) u5),
+        elemental-power: (+ u5 (mod stacks-block-height u15)) })
+    (ok true)))
+
+(define-read-only (get-nft-elements (token-id uint))
+  (map-get? nft-elements token-id))
+
+
+
+;; Quest system tracking
+(define-map active-quests principal 
+  { quest-id: uint,
+    progress: uint,
+    target: uint,
+    reward-claimed: bool })
+
+(define-public (start-quest (quest-id uint))
+  (let (
+    (current-quest (default-to { quest-id: u0, progress: u0, target: u50, reward-claimed: false }
+                    (map-get? active-quests tx-sender)))
+  )
+    (map-set active-quests tx-sender
+      { quest-id: quest-id,
+        progress: u0,
+        target: u50,
+        reward-claimed: false })
+    (ok true)))
+
+(define-public (claim-quest-reward)
+  (let (
+    (quest-data (default-to { quest-id: u0, progress: u0, target: u50, reward-claimed: false }
+                 (map-get? active-quests tx-sender)))
+  )
+    (asserts! (>= (get progress quest-data) (get target quest-data)) (err u106))
+    (asserts! (not (get reward-claimed quest-data)) (err u107))
+    (map-set active-quests tx-sender
+      (merge quest-data { reward-claimed: true }))
+    (ok true)))
+
+
+
+
+;; Fusion system maps
+(define-map fused-nfts uint 
+  { base-nft: uint,
+    catalyst-nft: uint,
+    fusion-power: uint })
+
+(define-public (fuse-nfts (base-id uint) (catalyst-id uint))
+  (let (
+    (token-id (+ (var-get last-token-id) u1))
+    (base-owner (map-get? token-owners tx-sender))
+  )
+    (asserts! (is-some base-owner) ERR_NOT_AUTHORIZED)
+    (map-set fused-nfts token-id
+      { base-nft: base-id,
+        catalyst-nft: catalyst-id,
+        fusion-power: (+ u10 (mod stacks-block-height u20)) })
+    (var-set last-token-id token-id)
+    (ok token-id)))
