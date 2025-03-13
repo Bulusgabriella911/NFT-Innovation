@@ -46,3 +46,65 @@
 
 (define-read-only (get-evolution-stage (owner principal))
   (default-to u0 (map-get? evolution-stages owner)))
+
+
+
+(define-map staked-nfts principal 
+  { staked: bool,
+    stake-time: uint })
+
+(define-public (stake-nft)
+  (let ((token-owner (map-get? token-owners tx-sender)))
+    (asserts! (is-some token-owner) ERR_NOT_AUTHORIZED)
+    (map-set staked-nfts tx-sender
+      { staked: true,
+        stake-time: stacks-block-height })
+    (ok true)))
+
+
+
+(define-map power-ups principal 
+  { speed-boost: uint,
+    power-up-count: uint })
+
+(define-public (use-power-up)
+  (let ((current-powerups (default-to { speed-boost: u0, power-up-count: u0 }
+                          (map-get? power-ups tx-sender))))
+    (asserts! (> (get power-up-count current-powerups) u0) (err u102))
+    (map-set power-ups tx-sender
+      { speed-boost: (+ (get speed-boost current-powerups) u1),
+        power-up-count: (- (get power-up-count current-powerups) u1) })
+    (ok true)))
+
+
+
+(define-map user-interactions principal 
+  { total-interactions: uint,
+    last-interaction: uint })
+
+(define-public (interact-with-nft (target-user principal))
+  (let ((current-interactions (default-to { total-interactions: u0, last-interaction: u0 }
+                              (map-get? user-interactions tx-sender))))
+    (map-set user-interactions tx-sender
+      { total-interactions: (+ (get total-interactions current-interactions) u1),
+        last-interaction: stacks-block-height })
+    (ok true)))
+
+
+
+(define-map nft-traits uint 
+  { strength: uint,
+    speed: uint,
+    wisdom: uint })
+
+(define-public (generate-traits (token-id uint))
+  (let ((owner (map-get? token-owners tx-sender)))
+    (asserts! (is-some owner) ERR_NOT_AUTHORIZED)
+    (map-set nft-traits token-id
+      { strength: (+ u1 (mod stacks-block-height u10)),
+        speed: (+ u1 (mod stacks-block-height u8)),
+        wisdom: (+ u1 (mod stacks-block-height u12)) })
+    (ok true)))
+
+(define-read-only (get-nft-traits (token-id uint))
+  (map-get? nft-traits token-id))
