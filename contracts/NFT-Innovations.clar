@@ -256,3 +256,120 @@
         fusion-power: (+ u10 (mod stacks-block-height u20)) })
     (var-set last-token-id token-id)
     (ok token-id)))
+
+
+;; Rarity System
+(define-map nft-rarity uint 
+  { rarity-level: (string-ascii 20),
+    rarity-score: uint,
+    bonus-multiplier: uint })
+
+(define-public (set-nft-rarity (token-id uint))
+  (let ((random-score (mod stacks-block-height u100)))
+    (map-set nft-rarity token-id
+      (if (< random-score u10)
+        { rarity-level: "Legendary", rarity-score: u100, bonus-multiplier: u5 }
+        (if (< random-score u30)
+          { rarity-level: "Rare", rarity-score: u75, bonus-multiplier: u3 }
+          { rarity-level: "Common", rarity-score: u50, bonus-multiplier: u1 })))
+    (ok true)))
+
+(define-read-only (get-nft-rarity (token-id uint))
+  (map-get? nft-rarity token-id))
+
+
+(define-map daily-rewards principal 
+  { last-claim: uint,
+    streak: uint })
+
+(define-public (claim-daily-reward)
+  (let (
+    (current-data (default-to { last-claim: u0, streak: u0 } 
+                   (map-get? daily-rewards tx-sender)))
+    (current-height stacks-block-height)
+  )
+    (asserts! (> current-height (+ (get last-claim current-data) u144)) (err u110))
+    (map-set daily-rewards tx-sender
+      { last-claim: current-height,
+        streak: (+ (get streak current-data) u1) })
+    (ok true)))
+
+
+(define-map crafting-recipes uint 
+  { required-items: (list 3 uint),
+    result-item: uint })
+
+(define-map player-inventory principal 
+  { materials: (list 10 uint),
+    crafted-items: (list 5 uint) })
+
+(define-public (craft-item (recipe-id uint))
+  (let (
+    (recipe (unwrap! (map-get? crafting-recipes recipe-id) (err u111)))
+    (inventory (default-to { materials: (list ), crafted-items: (list ) }
+                (map-get? player-inventory tx-sender)))
+  )
+    (map-set player-inventory tx-sender
+      { materials: (get materials inventory),
+        crafted-items: (unwrap-panic (as-max-len? 
+          (append (get crafted-items inventory) (get result-item recipe)) u5)) })
+    (ok true)))
+
+
+
+(define-map battle-stats uint 
+  { attack: uint,
+    defense: uint,
+    wins: uint,
+    losses: uint })
+
+(define-public (initiate-battle (attacker-id uint) (defender-id uint))
+  (let (
+    (attacker-stats (default-to { attack: u0, defense: u0, wins: u0, losses: u0 }
+                     (map-get? battle-stats attacker-id)))
+    (defender-stats (default-to { attack: u0, defense: u0, wins: u0, losses: u0 }
+                     (map-get? battle-stats defender-id)))
+  )
+    (if (> (get attack attacker-stats) (get defense defender-stats))
+      (map-set battle-stats attacker-id 
+        (merge attacker-stats { wins: (+ (get wins attacker-stats) u1) }))
+      (map-set battle-stats attacker-id 
+        (merge attacker-stats { losses: (+ (get losses attacker-stats) u1) })))
+    (ok true)))
+
+
+(define-map marketplace 
+  { token-id: uint }
+  { price: uint,
+    seller: principal,
+    is-listed: bool })
+
+(define-public (list-nft (token-id uint) (price uint))
+  (let ((owner (map-get? token-owners tx-sender)))
+    (asserts! (is-some owner) ERR_NOT_AUTHORIZED)
+    (map-set marketplace { token-id: token-id }
+      { price: price,
+        seller: tx-sender,
+        is-listed: true })
+    (ok true)))
+
+(define-read-only (get-listing (token-id uint))
+  (map-get? marketplace { token-id: token-id }))
+
+
+(define-map nft-rentals uint 
+  { renter: (optional principal),
+    rental-end: uint,
+    price-per-block: uint })
+
+(define-public (rent-nft (token-id uint) (duration uint))
+  (let (
+    (rental-info (default-to { renter: none, rental-end: u0, price-per-block: u0 }
+                  (map-get? nft-rentals token-id)))
+  )
+    (asserts! (is-none (get renter rental-info)) (err u112))
+    (map-set nft-rentals token-id
+      { renter: (some tx-sender),
+        rental-end: (+ stacks-block-height duration),
+        price-per-block: u10 })
+    (ok true)))
