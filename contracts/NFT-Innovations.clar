@@ -373,3 +373,122 @@
         rental-end: (+ stacks-block-height duration),
         price-per-block: u10 })
     (ok true)))
+
+
+(define-map enchantments uint 
+  { enchant-type: (string-ascii 20),
+    power-boost: uint,
+    durability: uint })
+
+(define-public (enchant-nft (token-id uint) (enchant-type (string-ascii 20)))
+  (let (
+    (current-block stacks-block-height)
+    (power-boost (+ u5 (mod current-block u10)))
+  )
+    (map-set enchantments token-id
+      { enchant-type: enchant-type,
+        power-boost: power-boost,
+        durability: u100 })
+    (ok true)))
+
+(define-read-only (get-enchantment (token-id uint))
+  (map-get? enchantments token-id))
+
+
+
+(define-map nft-metadata uint 
+  { name: (string-ascii 64),
+    description: (string-ascii 256),
+    image-uri: (string-ascii 256) })
+
+(define-public (set-nft-metadata (token-id uint) (name (string-ascii 64)) (description (string-ascii 256)) (image-uri (string-ascii 256)))
+  (let ((owner (map-get? token-owners tx-sender)))
+    (asserts! (is-some owner) ERR_NOT_AUTHORIZED)
+    (map-set nft-metadata token-id
+      { name: name,
+        description: description,
+        image-uri: image-uri })
+    (ok true)))
+
+(define-read-only (get-nft-metadata (token-id uint))
+  (map-get? nft-metadata token-id))
+
+
+
+(define-map seasonal-events 
+  { event-id: uint }
+  { name: (string-ascii 64),
+    start-block: uint,
+    end-block: uint,
+    active: bool,
+    reward-multiplier: uint })
+
+(define-map event-participation principal 
+  { event-id: uint,
+    participation-count: uint,
+    rewards-earned: uint })
+
+(define-public (create-seasonal-event (event-id uint) (name (string-ascii 64)) (duration uint) (reward-multiplier uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_NOT_AUTHORIZED)
+    (map-set seasonal-events { event-id: event-id }
+      { name: name,
+        start-block: stacks-block-height,
+        end-block: (+ stacks-block-height duration),
+        active: true,
+        reward-multiplier: reward-multiplier })
+    (ok true)))
+
+(define-public (participate-in-event (event-id uint))
+  (let (
+    (event (unwrap! (map-get? seasonal-events { event-id: event-id }) (err u120)))
+    (current-participation (default-to { event-id: event-id, participation-count: u0, rewards-earned: u0 }
+                           (map-get? event-participation tx-sender)))
+  )
+    (asserts! (get active event) (err u121))
+    (asserts! (<= stacks-block-height (get end-block event)) (err u122))
+    (map-set event-participation tx-sender
+      { event-id: event-id,
+        participation-count: (+ (get participation-count current-participation) u1),
+        rewards-earned: (+ (get rewards-earned current-participation) (get reward-multiplier event)) })
+    (ok true)))
+
+(define-read-only (get-active-events)
+  (ok true))
+
+
+
+
+
+
+
+(define-map nft-levels uint 
+  { level: uint,
+    experience: uint,
+    level-cap: uint })
+
+(define-constant XP_PER_LEVEL u100)
+
+(define-public (gain-experience (token-id uint) (xp-amount uint))
+  (let (
+    (owner (map-get? token-owners tx-sender))
+    (current-levels (default-to { level: u1, experience: u0, level-cap: u50 }
+                    (map-get? nft-levels token-id)))
+    (new-xp (+ (get experience current-levels) xp-amount))
+    (new-level (+ (get level current-levels) (/ new-xp XP_PER_LEVEL)))
+    (remaining-xp (mod new-xp XP_PER_LEVEL))
+  )
+    (asserts! (is-some owner) ERR_NOT_AUTHORIZED)
+    (map-set nft-levels token-id
+      { level: (if (> new-level (get level-cap current-levels))
+                 (get level-cap current-levels)
+                 new-level),
+        experience: remaining-xp,
+        level-cap: (get level-cap current-levels) })
+    (ok new-level)))
+
+(define-read-only (get-nft-level (token-id uint))
+  (default-to { level: u1, experience: u0, level-cap: u50 }
+    (map-get? nft-levels token-id)))
+
+
