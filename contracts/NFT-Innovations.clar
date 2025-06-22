@@ -550,3 +550,171 @@
     (map-set merge-cooldowns tx-sender stacks-block-height)
     (var-set last-token-id token-id)
     (ok token-id)))
+
+  
+
+  (define-map user-reputation principal 
+  { score: uint,
+    last-update: uint,
+    positive-actions: uint,
+    negative-actions: uint })
+
+(define-map reputation-history principal 
+  { total-score-earned: uint,
+    peak-reputation: uint,
+    reputation-tier: uint })
+
+(define-constant REPUTATION_DECAY_RATE u1)
+(define-constant REPUTATION_DECAY_INTERVAL u1000)
+(define-constant MAX_REPUTATION u1000)
+(define-constant MIN_REPUTATION u0)
+
+(define-public (initialize-reputation)
+  (let ((existing-rep (map-get? user-reputation tx-sender)))
+    (if (is-none existing-rep)
+      (begin
+        (map-set user-reputation tx-sender
+          { score: u100,
+            last-update: stacks-block-height,
+            positive-actions: u0,
+            negative-actions: u0 })
+        (map-set reputation-history tx-sender
+          { total-score-earned: u0,
+            peak-reputation: u100,
+            reputation-tier: u1 })
+        (ok true))
+      (ok false))))
+
+(define-public (add-positive-reputation (amount uint))
+  (let (
+    (current-rep (default-to { score: u100, last-update: u0, positive-actions: u0, negative-actions: u0 }
+                  (map-get? user-reputation tx-sender)))
+    (current-history (default-to { total-score-earned: u0, peak-reputation: u100, reputation-tier: u1 }
+                     (map-get? reputation-history tx-sender)))
+    (decayed-score (calculate-decayed-reputation (get score current-rep) (get last-update current-rep)))
+    (new-score (if (> (+ decayed-score amount) MAX_REPUTATION)
+                 MAX_REPUTATION
+                 (+ decayed-score amount)))
+    (new-tier (calculate-reputation-tier new-score))
+  )
+    (map-set user-reputation tx-sender
+      { score: new-score,
+        last-update: stacks-block-height,
+        positive-actions: (+ (get positive-actions current-rep) u1),
+        negative-actions: (get negative-actions current-rep) })
+    (map-set reputation-history tx-sender
+      { total-score-earned: (+ (get total-score-earned current-history) amount),
+        peak-reputation: (if (> new-score (get peak-reputation current-history))
+                          new-score
+                          (get peak-reputation current-history)),
+        reputation-tier: new-tier })
+    (ok new-score)))
+
+(define-public (subtract-negative-reputation (amount uint))
+  (let (
+    (current-rep (default-to { score: u100, last-update: u0, positive-actions: u0, negative-actions: u0 }
+                  (map-get? user-reputation tx-sender)))
+    (decayed-score (calculate-decayed-reputation (get score current-rep) (get last-update current-rep)))
+    (new-score (if (< decayed-score amount)
+                 MIN_REPUTATION
+                 (- decayed-score amount)))
+    (new-tier (calculate-reputation-tier new-score))
+  )
+    (map-set user-reputation tx-sender
+      { score: new-score,
+        last-update: stacks-block-height,
+        positive-actions: (get positive-actions current-rep),
+        negative-actions: (+ (get negative-actions current-rep) u1) })
+    (ok new-score)))
+
+(define-private (calculate-decayed-reputation (current-score uint) (last-update uint))
+  (let (
+    (blocks-passed (- stacks-block-height last-update))
+    (decay-periods (/ blocks-passed REPUTATION_DECAY_INTERVAL))
+    (total-decay (* decay-periods REPUTATION_DECAY_RATE))
+  )
+    (if (> total-decay current-score)
+      MIN_REPUTATION
+      (- current-score total-decay))))
+
+(define-private (calculate-reputation-tier (score uint))
+  (if (>= score u800)
+    u5
+    (if (>= score u600)
+      u4
+      (if (>= score u400)
+        u3
+        (if (>= score u200)
+          u2
+          u1)))))
+
+(define-public (get-reputation-multiplier (user principal))
+  (let (
+    (rep-data (default-to { score: u100, last-update: u0, positive-actions: u0, negative-actions: u0 }
+               (map-get? user-reputation user)))
+    (current-score (calculate-decayed-reputation (get score rep-data) (get last-update rep-data)))
+    (tier (calculate-reputation-tier current-score))
+  )
+    (ok (if (is-eq tier u5)
+          u3
+          (if (is-eq tier u4)
+            u2
+            u1)))))
+
+(define-public (reputation-gated-mint)
+  (let (
+    (rep-data (default-to { score: u100, last-update: u0, positive-actions: u0, negative-actions: u0 }
+               (map-get? user-reputation tx-sender)))
+    (current-score (calculate-decayed-reputation (get score rep-data) (get last-update rep-data)))
+    (token-id (+ (var-get last-token-id) u1))
+  )
+    (asserts! (>= current-score u300) (err u400))
+    (asserts! (is-none (map-get? token-owners tx-sender)) ERR_NFT_EXISTS)
+    (map-set token-owners tx-sender token-id)
+    (map-set activity-levels tx-sender u1)
+    (map-set evolution-stages tx-sender u1)
+    (var-set last-token-id token-id)
+    (unwrap! (add-positive-reputation u20) (err u401))
+    (ok token-id)))
+
+(define-public (reputation-based-trade (token-id uint) (buyer principal) (price uint))
+  (let (
+    (seller-rep (default-to { score: u100, last-update: u0, positive-actions: u0, negative-actions: u0 }
+                 (map-get? user-reputation tx-sender)))
+    (buyer-rep (default-to { score: u100, last-update: u0, positive-actions: u0, negative-actions: u0 }
+               (map-get? user-reputation buyer)))
+    (seller-score (calculate-decayed-reputation (get score seller-rep) (get last-update seller-rep)))
+    (buyer-score (calculate-decayed-reputation (get score buyer-rep) (get last-update buyer-rep)))
+  )
+    (asserts! (>= seller-score u200) (err u401))
+    (asserts! (>= buyer-score u200) (err u402))
+    (asserts! (is-some (map-get? token-owners tx-sender)) ERR_NOT_AUTHORIZED)
+    (map-set token-owners buyer token-id)
+    (unwrap! (add-positive-reputation u10) (err u403))
+    (ok true)))
+
+(define-read-only (get-user-reputation (user principal))
+  (let (
+    (rep-data (default-to { score: u100, last-update: u0, positive-actions: u0, negative-actions: u0 }
+               (map-get? user-reputation user)))
+  )
+    (ok { 
+      current-score: (calculate-decayed-reputation (get score rep-data) (get last-update rep-data)),
+      tier: (calculate-reputation-tier (calculate-decayed-reputation (get score rep-data) (get last-update rep-data))),
+      positive-actions: (get positive-actions rep-data),
+      negative-actions: (get negative-actions rep-data)
+    })))
+
+(define-read-only (get-reputation-history (user principal))
+  (ok (map-get? reputation-history user)))
+
+(define-public (report-malicious-behavior (reported-user principal))
+  (let (
+    (reporter-rep (default-to { score: u100, last-update: u0, positive-actions: u0, negative-actions: u0 }
+                   (map-get? user-reputation tx-sender)))
+    (reporter-score (calculate-decayed-reputation (get score reporter-rep) (get last-update reporter-rep)))
+  )
+    (asserts! (>= reporter-score u400) (err u403))
+    (asserts! (not (is-eq tx-sender reported-user)) (err u404))
+    (unwrap! (add-positive-reputation u5) (err u405))
+    (ok true)))
