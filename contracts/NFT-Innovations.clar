@@ -718,3 +718,145 @@
     (asserts! (not (is-eq tx-sender reported-user)) (err u404))
     (unwrap! (add-positive-reputation u5) (err u405))
     (ok true)))
+
+(define-map insurance-policies uint
+  { insured-nft: uint,
+    policy-holder: principal,
+    coverage-amount: uint,
+    premium-paid: uint,
+    policy-start: uint,
+    policy-end: uint,
+    active: bool })
+
+(define-map insurer-pools principal
+  { total-staked: uint,
+    available-coverage: uint,
+    policies-backed: uint,
+    yield-earned: uint })
+
+(define-map insurance-claims uint
+  { policy-id: uint,
+    claim-amount: uint,
+    claim-reason: (string-ascii 100),
+    claim-time: uint,
+    status: uint,
+    validator-votes: uint })
+
+(define-data-var next-policy-id uint u1)
+(define-data-var next-claim-id uint u1)
+
+(define-constant INSURANCE_ERR_INSUFFICIENT_COVERAGE (err u500))
+(define-constant INSURANCE_ERR_INVALID_POLICY (err u501))
+(define-constant INSURANCE_ERR_CLAIM_EXISTS (err u502))
+(define-constant INSURANCE_ERR_INVALID_CLAIM (err u503))
+(define-constant INSURANCE_ERR_POLICY_EXPIRED (err u504))
+
+(define-public (stake-as-insurer (amount uint))
+  (let (
+    (current-pool (default-to { total-staked: u0, available-coverage: u0, policies-backed: u0, yield-earned: u0 }
+                   (map-get? insurer-pools tx-sender)))
+  )
+    (map-set insurer-pools tx-sender
+      { total-staked: (+ (get total-staked current-pool) amount),
+        available-coverage: (+ (get available-coverage current-pool) (* amount u5)),
+        policies-backed: (get policies-backed current-pool),
+        yield-earned: (get yield-earned current-pool) })
+    (ok true)))
+
+(define-public (create-insurance-policy (nft-id uint) (coverage-amount uint) (duration uint))
+  (let (
+    (policy-id (var-get next-policy-id))
+    (premium-rate u10)
+    (premium-amount (/ (* coverage-amount premium-rate) u100))
+    (owner (map-get? token-owners tx-sender))
+  )
+    (asserts! (is-some owner) ERR_NOT_AUTHORIZED)
+    (asserts! (>= (get-total-available-coverage) coverage-amount) INSURANCE_ERR_INSUFFICIENT_COVERAGE)
+    (map-set insurance-policies policy-id
+      { insured-nft: nft-id,
+        policy-holder: tx-sender,
+        coverage-amount: coverage-amount,
+        premium-paid: premium-amount,
+        policy-start: stacks-block-height,
+        policy-end: (+ stacks-block-height duration),
+        active: true })
+    (var-set next-policy-id (+ policy-id u1))
+    (unwrap! (distribute-premium premium-amount) (err u506))
+    (ok policy-id)))
+
+(define-public (file-insurance-claim (policy-id uint) (claim-amount uint) (reason (string-ascii 100)))
+  (let (
+    (policy (unwrap! (map-get? insurance-policies policy-id) INSURANCE_ERR_INVALID_POLICY))
+    (claim-id (var-get next-claim-id))
+  )
+    (asserts! (is-eq (get policy-holder policy) tx-sender) ERR_NOT_AUTHORIZED)
+    (asserts! (get active policy) INSURANCE_ERR_INVALID_POLICY)
+    (asserts! (<= stacks-block-height (get policy-end policy)) INSURANCE_ERR_POLICY_EXPIRED)
+    (asserts! (<= claim-amount (get coverage-amount policy)) (err u505))
+    (map-set insurance-claims claim-id
+      { policy-id: policy-id,
+        claim-amount: claim-amount,
+        claim-reason: reason,
+        claim-time: stacks-block-height,
+        status: u1,
+        validator-votes: u0 })
+    (var-set next-claim-id (+ claim-id u1))
+    (ok claim-id)))
+
+(define-public (validate-claim (claim-id uint) (approve bool))
+  (let (
+    (claim (unwrap! (map-get? insurance-claims claim-id) INSURANCE_ERR_INVALID_CLAIM))
+    (validator-rep (default-to { score: u100, last-update: u0, positive-actions: u0, negative-actions: u0 }
+                    (map-get? user-reputation tx-sender)))
+    (validator-score (calculate-decayed-reputation (get score validator-rep) (get last-update validator-rep)))
+  )
+    (asserts! (>= validator-score u400) (err u403))
+    (asserts! (is-eq (get status claim) u1) INSURANCE_ERR_INVALID_CLAIM)
+    (if approve
+      (begin
+        (map-set insurance-claims claim-id
+          (merge claim { validator-votes: (+ (get validator-votes claim) u1) }))
+        (if (>= (get validator-votes claim) u3)
+          (begin
+            (map-set insurance-claims claim-id
+              (merge claim { status: u2 }))
+            (process-insurance-payout claim-id))
+          (ok true)))
+      (begin
+        (map-set insurance-claims claim-id
+          (merge claim { status: u3 }))
+        (ok true)))))
+
+(define-private (process-insurance-payout (claim-id uint))
+  (let (
+    (claim (unwrap! (map-get? insurance-claims claim-id) INSURANCE_ERR_INVALID_CLAIM))
+    (policy (unwrap! (map-get? insurance-policies (get policy-id claim)) INSURANCE_ERR_INVALID_POLICY))
+  )
+    (map-set insurance-policies (get policy-id claim)
+      (merge policy { active: false }))
+    (ok true)))
+
+(define-private (distribute-premium (premium-amount uint))
+  (ok true))
+
+(define-private (get-total-available-coverage)
+  u1000000)
+
+(define-public (withdraw-insurer-yield)
+  (let (
+    (pool-data (unwrap! (map-get? insurer-pools tx-sender) (err u506)))
+    (yield-amount (get yield-earned pool-data))
+  )
+    (asserts! (> yield-amount u0) (err u507))
+    (map-set insurer-pools tx-sender
+      (merge pool-data { yield-earned: u0 }))
+    (ok yield-amount)))
+
+(define-read-only (get-insurance-policy (policy-id uint))
+  (map-get? insurance-policies policy-id))
+
+(define-read-only (get-insurance-claim (claim-id uint))
+  (map-get? insurance-claims claim-id))
+
+(define-read-only (get-insurer-pool (insurer principal))
+  (map-get? insurer-pools insurer))
