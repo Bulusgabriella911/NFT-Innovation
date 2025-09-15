@@ -9,6 +9,14 @@ requirements = []
 path = 'contracts/NFT-Innovations.clar'
 clarity_version = 3
 epoch = 3.0
+[contracts.community-governance]
+path = 'contracts/community-governance.clar'
+clarity_version = 3
+epoch = 3.0
+[contracts.dynamic-marketplace]
+path = 'contracts/dynamic-marketplace.clar'
+clarity_version = 3
+epoch = 3.0
 [repl.analysis]
 passes = ['check_checker']
 
