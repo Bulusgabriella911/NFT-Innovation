@@ -13,6 +13,10 @@ epoch = 3.0
 path = 'contracts/community-governance.clar'
 clarity_version = 3
 epoch = 3.0
+[contracts.dynamic-marketplace]
+path = 'contracts/dynamic-marketplace.clar'
+clarity_version = 3
+epoch = 3.0
 [repl.analysis]
 passes = ['check_checker']
 
